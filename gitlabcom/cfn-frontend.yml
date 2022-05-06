@@ -1,0 +1,125 @@
+AWSTemplateFormatVersion: 2010-09-09
+Description: Create AWS Resources From CFN template
+Parameters:
+  inProjectName:
+    Description: "Input Project Name"
+    Type: String
+    Default: esupport
+  inAreaName:
+    Description: "Area Name"
+    Type: String
+    Default: eu
+    AllowedValues:
+      - us
+      - eu
+      - asia
+  inVpcEnv:
+    Description: "VPC Environment"
+    Type: String
+    Default: test
+    AllowedValues:
+      - test
+      - stag
+      - prod      
+  BranchName:
+    Description: "Enter the branch name of codecommit repository to deploy"
+    Type: String
+    Default: master
+  inFrontendBucketName:
+    Description: Select S3 BucketName where frontend code stored
+    Type: String
+    Default: frontend
+  inArtifactBucketName:
+    Description: Select S3 BucketName where artifact
+    Type: String
+    Default: artifact
+  inLoggingBucketName:
+    Description: Select S3 BucketName where store cloudfront logs
+    Type: String
+    Default: logging
+  inTemplateBucketName:
+    Description: Select S3 BucketName where CloudFormation Templates stored.
+    Type: String
+    Default: ci-infra-d-eu-s3-cfn-cicd-artifactstore
+  inTemplateBucketPrefix:
+    Description: S3 bucket prefix where CloudFormation Templates stored
+    Type: String
+    Default: e-support/frontend
+  inRepositoryName:
+    Description: Github RepositoryName
+    Type: String
+    Default: react-demo
+  inGitHubOwner:
+    Description: Github Owner
+    Type: String
+    Default: huypd6946-cowell    
+Resources:
+  S3Stack:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      TemplateURL:
+        Fn::Sub: https://${inTemplateBucketName}.s3.${AWS::Region}.${AWS::URLSuffix}/${inTemplateBucketPrefix}/deploy-nest-s3.yml
+      Parameters:
+        ProjectName: !Ref inProjectName
+        AreaName: !Ref inAreaName
+        VpcEnv: !Ref inVpcEnv
+        FrontendBucketName: !Ref inFrontendBucketName
+        ArtifactBucketName: !Ref inArtifactBucketName
+        LoggingBucketName: !Ref inLoggingBucketName
+  CodeCommitStack:
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      TemplateURL:
+        Fn::Sub: https://${inTemplateBucketName}.s3.${AWS::Region}.${AWS::URLSuffix}/${inTemplateBucketPrefix}/deploy-nest-codecommit.yml
+      Parameters:
+        ProjectName: !Ref inProjectName
+        AreaName: !Ref inAreaName
+        VpcEnv: !Ref inVpcEnv        
+  CodeBuildStack:
+    DependsOn:
+     - CodeCommitStack  
+    Type: "AWS::CloudFormation::Stack"
+    Properties:
+      TemplateURL:
+        Fn::Sub: https://${inTemplateBucketName}.s3.${AWS::Region}.${AWS::URLSuffix}/${inTemplateBucketPrefix}/deploy-nest-codebuild.yml
+      Parameters:
+        ProjectName: !Ref inProjectName
+        AreaName: !Ref inAreaName
+        VpcEnv: !Ref inVpcEnv
+  CodePipelineStack:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+      - CodeBuildStack
+    Properties:
+      TemplateURL:
+        Fn::Sub: https://${inTemplateBucketName}.s3.${AWS::Region}.${AWS::URLSuffix}/${inTemplateBucketPrefix}/deploy-nest-codepipeline.yml
+      Parameters:
+        ArtifactS3Bucket:
+          Fn::GetAtt: [ S3Stack, Outputs.ArtifactBucket ]
+        FrontendBucket:
+          Fn::GetAtt: [ S3Stack, Outputs.FrontendBucket ]          
+        FrontendRepoName:
+          Fn::GetAtt: [ CodeCommitStack, Outputs.FrontendRepoName ]
+        BranchName: !Ref BranchName
+        CodeBuildForFrontend:
+          Fn::GetAtt: [ CodeBuildStack, Outputs.CodeBuildForFrontendName ]
+        ProjectName: !Ref inProjectName
+        AreaName: !Ref inAreaName
+        VpcEnv: !Ref inVpcEnv
+        RepositoryName: !Ref inRepositoryName
+        GitHubOwner: !Ref inGitHubOwner
+  CloudWatchStack:
+    Type: "AWS::CloudFormation::Stack"
+    DependsOn:
+      - CodePipelineStack
+    Properties:
+      TemplateURL:
+        Fn::Sub: https://${inTemplateBucketName}.s3.${AWS::Region}.${AWS::URLSuffix}/${inTemplateBucketPrefix}/deploy-nest-cwe.yml
+      Parameters:
+        FrontendRepoName:
+          Fn::GetAtt: [ CodeCommitStack, Outputs.FrontendRepoName ]
+        CodePipelineImageUpdateForFrontendArn:
+          Fn::GetAtt: [ CodePipelineStack, Outputs.CodePipelineImageUpdateForFrontendArn ]
+        ProjectName: !Ref inProjectName
+        AreaName: !Ref inAreaName
+        VpcEnv: !Ref inVpcEnv    
